@@ -5,7 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"sync"
+	"strings"
+	"time"
 
 	"path/filepath"
 
@@ -27,11 +28,11 @@ func main() {
 	case "consolidate":
 		fmt.Println("Starting consolidation")
 		args := flag.Args()
-		if len(args) < 3 {
+		if len(args) < 4 {
 			log.Fatalf("Invalid input : valid usage is jsoner -a=consolidate <path> <id field> <consfield>")
 		}
 		files := findFiles(args[0], *filePattern)
-		consolidate(files, args[1], args[2], *threads)
+		consolidate(files, args[1], args[2], args[3], *threads)
 	default:
 		flag.Usage()
 	}
@@ -51,7 +52,16 @@ func findFiles(rootPath, pattern string) []string {
 	}
 	return selectedFiles
 }
-func consolidate(selectedFiles []string, idField, summaryField string, threads int) {
+
+type fieldDetails struct {
+	SummaryField string
+	Resolver     string
+}
+
+func consolidate(selectedFiles []string, idField, summaryField, resolverField string, threads int) {
+	summaryMap := make(map[string]int)
+	idFieldMap := make(map[string]fieldDetails)
+	startTime := time.Now()
 	for _, fileName := range selectedFiles {
 		log.Info("Reading file ", fileName)
 		jsonBytes, err := ioutil.ReadFile(fileName)
@@ -63,25 +73,53 @@ func consolidate(selectedFiles []string, idField, summaryField string, threads i
 		if err != nil {
 			log.Fatalf("File parsing error %v", err)
 		}
-		phoneNumberMap := new(sync.Map)
+
 		totalRecords := len(records)
 		log.Infof("File %s has %d records ", fileName, totalRecords)
-		summaryMap := make(map[string]int)
+
 		for index := 0; index < totalRecords; index++ {
 			record := records[index]
 			if idFieldValue, isExisting := record[idField]; isExisting {
-				phoneNumberMap.Store(idFieldValue, 1)
-			}
-			if summaryFieldValue, isExisting := record[summaryField]; isExisting {
-				summaryField := fmt.Sprintf("%v", summaryFieldValue)
-				if value, isFound := summaryMap[summaryField]; isFound {
-					summaryMap[summaryField] = (value + 1)
+				idField := fmt.Sprintf("%v", idFieldValue)
+				summaryFieldValue, _ := record[summaryField]
+				summaryFieldValueStr := fmt.Sprintf("%v", summaryFieldValue)
+				rslvField, _ := record[resolverField]
+				rslvFieldValueStr := fmt.Sprintf("%v", rslvField)
+				if existingSummary, isExisting := idFieldMap[idField]; isExisting {
+					if existingSummary.SummaryField != summaryFieldValueStr {
+						//We need to prioritize
+						if strings.Compare(rslvFieldValueStr, existingSummary.Resolver) > 0 {
+							idFieldMap[idField] = fieldDetails{SummaryField: summaryFieldValueStr, Resolver: rslvFieldValueStr}
+						}
+					}
+
 				} else {
-					summaryMap[summaryField] = 1
+					idFieldMap[idField] = fieldDetails{SummaryField: summaryFieldValueStr, Resolver: rslvFieldValueStr}
 				}
+
 			}
+
 		}
-		log.Infof("Map %+v", summaryMap)
+		log.Infof("Unique records so far %d", len(idFieldMap))
+
 	}
 
+	log.Infof("Final consolidation result")
+	log.Infof("Total number of unique records in all the files %d", len(idFieldMap))
+	log.Infof("Consolidation result based on %s", summaryField)
+
+	for _, summaryFieldValue := range idFieldMap {
+		if value, isFound := summaryMap[summaryFieldValue.SummaryField]; isFound {
+			summaryMap[summaryFieldValue.SummaryField] = (value + 1)
+		} else {
+			summaryMap[summaryFieldValue.SummaryField] = 1
+		}
+	}
+	for key, count := range summaryMap {
+		log.Infof("%s=%d", key, count)
+	}
+
+	endTime := time.Now()
+	duration := endTime.Sub(startTime)
+	log.Infof("Tool excution completed %s", duration.String())
 }
