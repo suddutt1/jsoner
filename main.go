@@ -33,11 +33,58 @@ func main() {
 		}
 		files := findFiles(args[0], *filePattern)
 		consolidate(files, args[1], args[2], args[3], *threads)
+	case "extract":
+		fmt.Println("Starting extraction..")
+		args := flag.Args()
+		if len(args) < 3 {
+			log.Fatalf("Invalid input : valid usage is jsoner -a=extract <path to input json file> <id field> <field 1> [field 2  field 3 ...]")
+		}
+		fileToProcess := args[0]
+		idField := args[1]
+		attrFields := args[2:]
+		extract(fileToProcess, idField, attrFields)
 	default:
 		flag.Usage()
 	}
 }
+func extract(filePath, idField string, attrs []string) {
+	startTime := time.Now()
+	jsonBytes, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		log.Fatalf("File reading error %v", err)
+	}
+	records := make([]map[string]interface{}, 0)
+	err = json.Unmarshal(jsonBytes, &records)
+	if err != nil {
+		log.Fatalf("File parsing error %v", err)
+	}
 
+	totalRecords := len(records)
+	log.Infof("File %s has %d records ", filePath, totalRecords)
+	outputRecords := make([]map[string]interface{}, 0)
+	for _, record := range records {
+		if v, isOk := record[idField]; isOk {
+			outputRecord := make(map[string]interface{})
+			outputRecord[idField] = v
+			for _, attrName := range attrs {
+				if va, isExisting := record[attrName]; isExisting {
+					outputRecord[attrName] = va
+				}
+
+			}
+			outputRecords = append(outputRecords, outputRecord)
+		}
+	}
+	outputJSON, _ := json.Marshal(outputRecords)
+	outputFileName := fmt.Sprintf("extract_%s.json", filePath)
+	err = ioutil.WriteFile(outputFileName, outputJSON, 0666)
+	if err != nil {
+		log.Fatalf("File writing error %v", err)
+	}
+	endTime := time.Now()
+	duration := endTime.Sub(startTime)
+	log.Infof("Tool excution completed %s", duration.String())
+}
 func findFiles(rootPath, pattern string) []string {
 	files, err := ioutil.ReadDir(rootPath)
 	if err != nil {
